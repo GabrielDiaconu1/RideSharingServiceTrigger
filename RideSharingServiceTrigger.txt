@@ -1,0 +1,192 @@
+/*******************************************************
+
+Author: Gabriel Diaconu
+Date: Nov 12 2023
+Description:create 3 triggers, one for INSERT, one for UPDATE and one for DELETE
+********************************************************/
+
+-- Setting NOCOUNT ON suppresses completion messages for each INSERT
+SET NOCOUNT ON
+
+-- Set date format to year, month, day
+SET DATEFORMAT ymd;
+
+-- Make the master database the current database
+USE master
+
+-- If database co859 exists, drop it
+IF EXISTS (SELECT * FROM sysdatabases WHERE name = 'co859')
+BEGIN
+  ALTER DATABASE co859 SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+  DROP DATABASE co859;
+END
+GO
+
+-- Create the co859 database
+CREATE DATABASE co859;
+GO
+
+-- Make the co859 database the current database
+USE co859;
+
+-- Create ride_sharing_services table
+CREATE TABLE ride_sharing_services (
+  service_id INT PRIMARY KEY, 
+  service_description VARCHAR(30), 
+  service_type CHAR(1) CHECK (service_type IN ('N', 'L', 'X','E','P')), 
+  hourly_rate MONEY,
+  sales_ytd MONEY); 
+
+-- Create sales table
+CREATE TABLE sales (
+	sales_id INT PRIMARY KEY, 
+	sales_date DATE, 
+	amount MONEY, 
+	service_id INT FOREIGN KEY REFERENCES ride_sharing_services(service_id));
+GO
+
+-- Insert ride_sharing_services records
+INSERT INTO ride_sharing_services VALUES(101, 'Normal Car', 'N', 80, 240);
+INSERT INTO ride_sharing_services VALUES(201, 'Luxury Car', 'L', 104, 312);
+INSERT INTO ride_sharing_services VALUES(301, 'Luxury Car XL', 'X', 120, 360);
+INSERT INTO ride_sharing_services VALUES(401, 'Eco-friendly Car', 'E', 88, 264);
+INSERT INTO ride_sharing_services VALUES(501, 'Pet Friendly Car', 'P', 100, 380);
+
+-- Insert sales records
+INSERT INTO sales VALUES(1, '2023-01-05', 120, 301);    -- Month and day don't have to be 2 digits
+INSERT INTO sales VALUES(2, '2023-01-06', 88, 401); -- But they typically are
+INSERT INTO sales VALUES(3, '2023-02-15', 100, 501);
+INSERT INTO sales VALUES(4, '2023-02-16', 104, 201);
+INSERT INTO sales VALUES(5, '2023-03-17', 80, 101);
+INSERT INTO sales VALUES(6, '2023-03-20', 100, 501);
+INSERT INTO sales VALUES(7, '2023-04-05', 120, 301);
+INSERT INTO sales VALUES(8, '2023-04-27', 80, 101);
+INSERT INTO sales VALUES(9, '2023-05-01', 104, 201);
+INSERT INTO sales VALUES(10, '2023-05-18', 80, 501);
+INSERT INTO sales VALUES(11, '2023-06-17', 88, 401);
+INSERT INTO sales VALUES(12, '2023-06-22', 120, 301);
+INSERT INTO sales VALUES(13, '2023-07-06', 100, 501);
+INSERT INTO sales VALUES(14, '2023-08-22', 104, 101);
+INSERT INTO sales VALUES(15, '2023-09-30', 88, 401);
+GO
+
+-- Verify inserts
+CREATE TABLE verify (
+  table_name varchar(30), 
+  actual INT, 
+  expected INT);
+GO
+
+INSERT INTO verify VALUES('ride_sharing_services', (SELECT COUNT(*) FROM ride_sharing_services), 5);
+INSERT INTO verify VALUES('sales', (SELECT COUNT(*) FROM sales), 15);
+PRINT 'Verification';
+SELECT table_name, actual, expected, expected - actual discrepancy FROM verify;
+DROP TABLE verify;
+GO
+
+CREATE INDEX IX_service_description
+ON ride_sharing_services (service_description);
+GO
+-- Create a view named high_end_services
+CREATE VIEW high_end_services
+AS
+SELECT
+    service_id,SUBSTRING(service_description,1,15) AS services,sales_ytd
+FROM ride_sharing_services
+WHERE
+    hourly_rate > (SELECT AVG(hourly_rate) FROM ride_sharing_services)
+
+GO
+SELECT * FROM high_end_services;
+
+-- Verify inserts
+CREATE TABLE verify (
+  table_name varchar(30), 
+  actual INT, 
+  expected INT);
+GO
+
+INSERT INTO verify VALUES('ride_sharing_services', (SELECT COUNT(*) FROM ride_sharing_services), 5);
+INSERT INTO verify VALUES('sales', (SELECT COUNT(*) FROM sales), 15);
+PRINT 'Verification';
+SELECT table_name, actual, expected, expected - actual discrepancy FROM verify;
+DROP TABLE verify;
+GO
+
+
+--End of Lab4
+--Create an insert trigger for year to date sales
+CREATE TRIGGER year_to_date_sales_insert
+ON sales
+AFTER INSERT
+AS
+BEGIN
+    UPDATE ride_sharing_services
+    SET sales_ytd = sales_ytd + (
+        SELECT amount
+        FROM inserted
+        WHERE service_id = ride_sharing_services.service_id
+    )
+    WHERE service_id IN (
+        SELECT service_id
+        FROM inserted
+    );
+END;
+GO
+--Create an update trigger for year to date sales
+CREATE TRIGGER year_to_date_sales_update
+ON sales
+AFTER UPDATE
+AS
+BEGIN
+    UPDATE ride_sharing_services
+    SET sales_ytd = sales_ytd  + i.amount
+    FROM ride_sharing_services rss
+    INNER JOIN inserted i ON rss.service_id = i.service_id;
+END;
+
+GO
+--Create an delete trigger for year to date sales
+CREATE TRIGGER year_to_date_sales_delete
+ON sales
+AFTER DELETE
+AS
+BEGIN
+    UPDATE ride_sharing_services
+    SET sales_ytd = sales_ytd - d.amount
+    FROM ride_sharing_services rss
+    INNER JOIN deleted d ON rss.service_id = d.service_id;
+END;
+
+GO
+
+-- Verification
+PRINT 'Verify triggers';
+PRINT 'Master Table Before Changes';
+--SELECT all rows and columns from the master table
+SELECT * FROM ride_sharing_services;
+
+-- INSERT a row into the sales table (ensure transaction amount is not zero, pick a large or unusual amount)
+INSERT INTO sales (sales_id,sales_date, amount, service_id)
+VALUES ('16','2023-10-01', 1000.00, 201);
+
+PRINT 'After INSERT';
+--SELECT all rows and columns from the master table
+SELECT * FROM ride_sharing_services;
+
+-- DELETE the row that just got inserted in the sales table
+DELETE FROM sales
+WHERE sales_id='16' AND sales_date = '2023-10-01' AND amount = 1000.00 AND service_id = 201;
+
+PRINT 'After DELETE';
+--SELECT all rows and columns from the master table
+SELECT * FROM ride_sharing_services;
+
+-- UPDATE the transaction amount in one row in the sales table (ensure transaction amount is not zero, pick a large or unusual amount, this will make it stand out in the output)
+UPDATE sales
+SET amount = 1000.00
+WHERE sales_id = 15; 
+
+PRINT 'After UPDATE';
+--SELECT all rows and columns from the master table
+SELECT * FROM ride_sharing_services;
